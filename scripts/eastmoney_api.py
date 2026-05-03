@@ -92,46 +92,45 @@ def get_stock_list(market: str = "A", max_pages: int = 10) -> list[dict]:
 
 def get_stock_kline(code: str, days: int = 120) -> list[dict]:
     """
-    获取个股日K线。
+    获取个股日K线（优先腾讯API）。
     code: "600519" 或 "002xxx"
-    days: 交易日数（最多取此天数）
+    days: 交易日数
     返回: [{"date":"2026-04-01","open":...,"high":...,"low":...,"close":...,
             "pct":...,"volume":...,"amount":...}, ...]
-    优先东方财富（支持更长周期）。
     """
-    market = "1" if code[:3] in ("600","601","603","605","688") else \
-             "0" if code[:3] in ("000","001","002","003","300") else "0"
-    secid = f"{market}.{code}"
-    params = {
-        "secid": secid,
-        "klt": "101",
-        "lmt": str(days),
-        "fields1": "f1,f2,f3,f4,f5,f6",
-        "fields2": "f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61",
-        "ut": "fa5fd1943c7b386f172d6893dbfbfdc4",
-        "fqt": "1",
-    }
-    qs = urllib.parse.urlencode(params)
+    prefix = "sh" if code[:3] in ("600","601","603","605","688") else "sz"
+    url = (f"https://web.ifzq.gtimg.cn/appstock/app/fqkline/get"
+           f"?param={prefix}{code},day,,,{days},qfq")
     try:
-        data = _fetch(f"https://push2.eastmoney.com/api/qt/stock/kline/get?{qs}")
+        req = urllib.request.Request(url, headers={
+            "User-Agent": "Mozilla/5.0",
+            "Referer": "https://gu.qq.com/",
+        })
+        with urllib.request.urlopen(req, timeout=10) as resp:
+            data = json.loads(resp.read().decode("utf-8"))
     except Exception:
         return []
+
+    key = f"{prefix}{code}"
+    klines = data.get("data", {}).get(key, {}).get("qfqday", [])
+    if not klines:
+        klines = data.get("data", {}).get(key, {}).get("day", [])
+    if not klines:
+        return []
+
     results = []
-    klines = data.get("data", {}).get("klines", [])
     pre_close = None
     for line in klines:
-        parts = line.split(",")
-        if len(parts) < 11:
-            continue
-        open_p  = float(parts[1])
-        close_p = float(parts[2])
-        high_p  = float(parts[3])
-        low_p   = float(parts[4])
-        vol     = float(parts[5])
-        amt     = float(parts[6])
+        # 腾讯格式: [date, open, close, high, low, volume]
+        date_str = str(line[0])
+        open_p  = float(line[1])
+        close_p = float(line[2])
+        high_p  = float(line[3])
+        low_p   = float(line[4])
+        vol     = float(line[5]) if len(line) > 5 else 0
         pct = (close_p - pre_close) / pre_close * 100 if pre_close else 0
         results.append({
-            "date": parts[0],
+            "date": date_str,
             "open": open_p,
             "close": close_p,
             "high": high_p,
@@ -139,7 +138,7 @@ def get_stock_kline(code: str, days: int = 120) -> list[dict]:
             "pre_close": pre_close or open_p,
             "pct": round(pct, 2),
             "volume": vol,
-            "amount": amt,
+            "amount": 0,
         })
         pre_close = close_p
     return results
@@ -158,12 +157,11 @@ def get_stock_quote(code: str) -> dict:
     secid = f"{market}.{code}"
     params = {
         "secid": secid,
-        "fields": "f43,f44,f45,f46,f47,f48,f50,f57,f58,f60,f20,f21",
+        "fields": "f43,f44,f45,f46,f47,f48,f50,f57,f58,f60",
     }
     qs = urllib.parse.urlencode(params)
     data = _fetch(f"https://push2.eastmoney.com/api/qt/stock/get?{qs}")
     d = data.get("data", {})
-    cap_w = d.get("f21") or d.get("f20") or 0
     return {
         "code": d.get("f57", code),
         "name": d.get("f58", ""),
@@ -174,5 +172,5 @@ def get_stock_quote(code: str) -> dict:
         "low": (d.get("f46") or 0) / 100,
         "volume": d.get("f47") or 0,
         "amount": d.get("f48") or 0,
-        "market_cap": round(cap_w / 100000000, 2),
+        "market_cap": 0,  # 通过 get_stock_list 获取
     }
