@@ -2,6 +2,7 @@
 全市场扫描器：遍历A股、筛选横盘股、输出结果
 """
 
+from typing import Optional
 import sys
 import os
 import time
@@ -18,7 +19,7 @@ from signal_detector import (
 
 
 def scan_single(code: str, stock_name: str = "", stock_cap: float = 0,
-                verbose: bool = False) -> dict | None:
+                verbose: bool = False) -> Optional[dict]:
     """
     分析单只股票，返回横盘选股结果。
     """

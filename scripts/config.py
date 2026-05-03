@@ -8,14 +8,14 @@ MIN_MARKET_CAP = 10  # 亿，流通市值下限（过小流动性差）
 
 # ===== A杀检测 =====
 A_SHA_LOOKBACK = 60          # 观察周期（交易日）
-A_SHA_MIN_DROP = -0.30       # 最小跌幅 -30%
-A_SHA_MAX_DAYS = 10          # 从高点跌到最低点的最大天数
-A_SHA_MAX_REBOUND = 0.10     # 下跌途中最大反弹不超过 10%
+A_SHA_MIN_DROP = -0.20       # 最小跌幅 -20%（当前市况下-30%太严）
+A_SHA_MAX_DAYS = 30          # 从高点跌到最低点的最大天数
+A_SHA_MAX_REBOUND = 0.15     # 下跌途中最大反弹不超过 15%
 
 # ===== 横盘判定 =====
 CONSOLIDATION_MIN_DAYS = 20   # 最小横盘天数
 CONSOLIDATION_MAX_DAYS = 120  # 最大横盘天数
-CONSOLIDATION_TOLERANCE = 0.15  # 横盘振幅容忍度（高/低比-1）
+CONSOLIDATION_TOLERANCE = 0.22  # 横盘振幅容忍度（高/低比-1）
 CONSOLIDATION_HIGH_Q = 0.85  # 上轨分位
 CONSOLIDATION_LOW_Q = 0.15   # 下轨分位
 
