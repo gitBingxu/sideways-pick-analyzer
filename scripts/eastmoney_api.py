@@ -73,7 +73,7 @@ def get_stock_list(max_pages: int = 15) -> list[dict]:
     返回: [{"code":"600519","name":"贵州茅台","market_cap":17341.31}, ...]
     market_cap 单位为亿
     """
-    fs = "m:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23"  # 深A主板+创业板+沪A主板+科创板
+    fs = "m:0+t:6,m:1+t:2"  # 深A主板+沪A主板
     fields = "f12,f14,f20,f21"  # 代码,名称,总市值,流通市值
     all_stocks = []
     page = 1
@@ -106,6 +106,8 @@ def get_stock_list(max_pages: int = 15) -> list[dict]:
         for item in items:
             code = str(item.get("f12", ""))
             name = str(item.get("f14", ""))
+            if "ST" in name:
+                continue
             cap_val = item.get("f21") or item.get("f20")
             if cap_val is None:
                 continue

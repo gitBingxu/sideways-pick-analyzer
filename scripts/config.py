@@ -37,3 +37,7 @@ RECOVERY_VOL_RATIO = 1.3      # 收回时放量倍数
 # ===== 扫描器 =====
 SCAN_TOP_N = 20               # 默认输出前 N 只
 MAX_STOCKS_SCAN = 3000        # 最多扫描股票数（防超时）
+
+# ===== 快照/增量扫描 =====
+SNAPSHOT_MAX_AGE_DAYS = 28    # 快照有效期（自然日，≈20交易日）
+POOL_MIN_CONSOLIDATION_DAYS = 10  # 入池门槛：A杀后至少横盘N天

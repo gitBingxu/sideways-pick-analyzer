@@ -1,5 +1,5 @@
 """
-全市场扫描器：遍历A股、筛选横盘股、输出结果
+扫描器：全市场扫描 + 增量池扫描 + 单股分析。
 """
 
 from typing import Optional
@@ -9,7 +9,7 @@ import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from config import *
-from eastmoney_api import get_stock_list, get_stock_kline
+from eastmoney_api import get_stock_kline
 from signal_detector import (
     detect_a_shred,
     detect_consolidation,
@@ -18,93 +18,113 @@ from signal_detector import (
 )
 
 
-def scan_single(code: str, stock_name: str = "", stock_cap: float = 0,
-                verbose: bool = False) -> Optional[dict]:
+def _analyze_stock(code: str, name: str = "", cap: float = 0,
+                   verbose: bool = False) -> tuple:
     """
-    分析单只股票，返回横盘选股结果。
+    拉一次K线，跑完整检测管线。
+    返回: (result | None, pool_entry | None)
+      - result: 满足全部条件的结果字典（含买点判断）
+      - pool_entry: 只要A杀后横盘≥POOL_MIN天就产出，用于建池
     """
     kline = get_stock_kline(code, days=120)
-    if not kline or len(kline) < CONSOLIDATION_MIN_DAYS + 10:
+    min_len = max(CONSOLIDATION_MIN_DAYS, POOL_MIN_CONSOLIDATION_DAYS) + 10
+    if not kline or len(kline) < min_len:
         if verbose:
             print(f"  ⚠ {code}: K线数据不足({len(kline) if kline else 0}日)")
-        return None
+        return None, None
 
     # A杀检测
     a_result = detect_a_shred(kline)
     if a_result is None:
         if verbose:
             print(f"  ⚠ {code}: 未检测到A杀形态")
-        return None
+        return None, None
     drop_rate, peak_date, trough_date = a_result
 
-    # 横盘判定
+    base = {
+        "code": code,
+        "name": name or code,
+        "market_cap": cap,
+        "a_shred_trough_date": trough_date,
+        "a_shred_drop": round(drop_rate * 100, 1),
+    }
+
+    # 池子检测：A杀后横盘 ≥ POOL_MIN 天
+    pool_entry = None
+    pool_consol = detect_consolidation(kline, trough_date,
+                                       min_days=POOL_MIN_CONSOLIDATION_DAYS)
+    if pool_consol is not None:
+        pool_days, pool_high, pool_low = pool_consol
+        pool_entry = dict(base)
+        pool_entry["consol_days"] = pool_days
+        pool_entry["consol_high"] = round(pool_high, 2)
+        pool_entry["consol_low"] = round(pool_low, 2)
+
+    # 完整检测
     c_result = detect_consolidation(kline, trough_date)
     if c_result is None:
-        if verbose:
+        if verbose and pool_entry is None:
             print(f"  ⚠ {code}: 未检测到横盘形态")
-        return None
+        return None, pool_entry
     consol_days, consol_high, consol_low = c_result
 
-    # 量能分析
     v_result = detect_volume_signal(kline, trough_date, kline[-1]["date"])
     if v_result is None:
         if verbose:
             print(f"  ⚠ {code}: 量能不足")
-        return None
+        return None, pool_entry
 
-    # 买点判断
     b_result = detect_buy_pattern(kline, consol_low, consol_high)
 
-    return {
-        "code": code,
-        "name": stock_name or code,
+    result = {
+        **base,
         "price": kline[-1]["close"],
-        "market_cap": stock_cap,
-        "a_shred_drop": round(drop_rate * 100, 1),
         "a_shred_peak_date": peak_date,
-        "a_shred_trough_date": trough_date,
         "consol_days": consol_days,
         "consol_high": round(consol_high, 2),
         "consol_low": round(consol_low, 2),
         "vol_signal": v_result,
         "buy_pattern": b_result,
     }
+    return result, pool_entry
 
 
-def scan_all(verbose: bool = False) -> list[dict]:
+def scan_single(code: str, stock_name: str = "", stock_cap: float = 0,
+                verbose: bool = False) -> Optional[dict]:
+    """分析单只股票，返回完整选股结果或 None。"""
+    result, _ = _analyze_stock(code, stock_name, stock_cap, verbose)
+    return result
+
+
+def scan_all(stocks: list[dict], verbose: bool = False) -> tuple:
     """
-    全市场扫描：获取股票列表 → 市值过滤 → 逐一扫描
+    全市场扫描。
+    stocks: 预过滤后的股票列表 [{"code","name","market_cap"}, ...]
+    返回: (results, pool)
     """
-    print("📡 正在获取A股股票列表...")
-    stocks = get_stock_list(max_pages=15)
-    print(f"✅ 获取到 {len(stocks)} 只A股")
-
-    # 市值过滤
-    filtered = [s for s in stocks
-                if MIN_MARKET_CAP <= s["market_cap"] <= MAX_MARKET_CAP]
-    print(f"🔍 市值 {MIN_MARKET_CAP}亿~{MAX_MARKET_CAP}亿: {len(filtered)} 只")
-
-    to_scan = filtered[:MAX_STOCKS_SCAN]
     results = []
+    pool = []
 
-    for i, stock in enumerate(to_scan):
+    for i, stock in enumerate(stocks):
         if verbose:
-            print(f"\n[{i+1}/{len(to_scan)}] {stock['code']} {stock['name']} "
+            print(f"\n[{i+1}/{len(stocks)}] {stock['code']} {stock['name']} "
                   f"(市值{stock['market_cap']}亿)")
         else:
             if (i + 1) % 30 == 0 or i == 0:
-                print(f"  进度: {i+1}/{len(to_scan)}", end="\r")
+                print(f"  进度: {i+1}/{len(stocks)}", end="\r")
                 sys.stdout.flush()
 
         try:
-            result = scan_single(
+            result, pool_entry = _analyze_stock(
                 stock["code"],
-                stock_name=stock["name"],
-                stock_cap=stock["market_cap"],
+                name=stock["name"],
+                cap=stock["market_cap"],
                 verbose=verbose,
             )
             if result:
                 results.append(result)
+            if pool_entry:
+                pool.append(pool_entry)
         except Exception as e:
             if verbose:
                 print(f"  ✗ {stock['code']}: {e}")
@@ -114,19 +134,61 @@ def scan_all(verbose: bool = False) -> list[dict]:
     if not verbose:
         print()
 
-    # 排序：按信号强度 + 横盘天数 + A杀深度
-    def sort_key(r):
-        strength_map = {"强": 3, "中": 2, "弱": 1}
-        vs = strength_map.get(r.get("vol_signal", {}).get("strength", ""), 0)
-        buy = 2 if r.get("buy_pattern") else 0
-        consol = r.get("consol_days", 0)
-        # A杀越深信号越强
-        a_shred = abs(r.get("a_shred_drop", 0))
-        return (vs + buy, consol, a_shred)
+    results.sort(key=_sort_key, reverse=True)
+    return results, pool
 
-    results.sort(key=sort_key, reverse=True)
-    print(f"🎯 扫描完成，发现 {len(results)} 只符合条件的股票")
-    return results
+
+def scan_from_pool(pool: list[dict], verbose: bool = False) -> tuple:
+    """
+    增量扫描：仅扫描池中股票。
+    pool: 快照中的候选列表 [{"code","name","market_cap","a_shred_trough_date",...}, ...]
+    返回: (results, new_pool)
+      - results: 满足全部条件的结果
+      - new_pool: A杀仍有效的池子（过期的剔除）
+    """
+    results = []
+    new_pool = []
+
+    for i, entry in enumerate(pool):
+        if verbose:
+            print(f"\n[池 {i+1}/{len(pool)}] {entry['code']} {entry.get('name', '')}")
+        else:
+            if (i + 1) % 10 == 0 or i == 0:
+                print(f"  池扫描: {i+1}/{len(pool)}", end="\r")
+                sys.stdout.flush()
+
+        try:
+            result, new_entry = _analyze_stock(
+                entry["code"],
+                name=entry.get("name", ""),
+                cap=entry.get("market_cap", 0),
+                verbose=verbose,
+            )
+            if new_entry:
+                new_pool.append(new_entry)
+            if result:
+                results.append(result)
+        except Exception as e:
+            if verbose:
+                print(f"  ✗ {entry['code']}: {e}")
+
+        time.sleep(0.05)
+
+    if not verbose:
+        print()
+
+    results.sort(key=_sort_key, reverse=True)
+    return results, new_pool
+
+
+def _sort_key(r: dict) -> tuple:
+    """排序键：信号强度 + 买点 + 横盘天数 + A杀深度。"""
+    strength_map = {"强": 3, "中": 2, "弱": 1}
+    vs = strength_map.get(r.get("vol_signal", {}).get("strength", ""), 0)
+    buy = 2 if r.get("buy_pattern") else 0
+    consol = r.get("consol_days", 0)
+    a_shred = abs(r.get("a_shred_drop", 0))
+    return (vs + buy, consol, a_shred)
 
 
 def format_result(result: dict, idx: int = 0) -> str:

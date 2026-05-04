@@ -59,12 +59,15 @@ def detect_a_shred(kline: list[dict]) -> Optional[tuple]:
     return (round(drop_rate, 4), peak_date, trough_date)
 
 
-def detect_consolidation(kline: list[dict], trough_date: str) -> Optional[tuple]:
+def detect_consolidation(kline: list[dict], trough_date: str,
+                         min_days: int = None) -> Optional[tuple]:
     """
     检测横盘整理形态（从A杀最低点之后）。
-    输入: K线列表, A杀最低点日期
+    输入: K线列表, A杀最低点日期, min_days(默认取 CONSOLIDATION_MIN_DAYS)
     返回: (横盘天数(int), 上轨价(float), 下轨价(float)) 或 None
     """
+    if min_days is None:
+        min_days = CONSOLIDATION_MIN_DAYS
     # 找到A杀最低点之后的K线
     start_idx = None
     for i, bar in enumerate(kline):
@@ -75,7 +78,7 @@ def detect_consolidation(kline: list[dict], trough_date: str) -> Optional[tuple]
         return None
 
     post_kline = kline[start_idx:]
-    if len(post_kline) < CONSOLIDATION_MIN_DAYS:
+    if len(post_kline) < min_days:
         return None
 
     # 限制最大观察天数
